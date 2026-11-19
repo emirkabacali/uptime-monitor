@@ -221,3 +221,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local Turkish working documents (never committed)
+local-docs/
+.claude/settings.local.json
