@@ -15,9 +15,15 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.session import SessionLocal
-from app.models import CheckResult, Incident, Monitor
+from app.models import CheckResult, Incident, Monitor, User
 from app.services.checker import CheckOutcome, check_url
 from app.services.monitor_state import IncidentAction, Transition, next_state
+from app.services.notifier import (
+    NotificationError,
+    format_down_message,
+    format_recovered_message,
+    get_notifier,
+)
 from app.worker.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -167,10 +173,62 @@ def run_check(db: Session, monitor_id: int, checker: Checker = check_url) -> Che
     return CheckRun(monitor_id, outcome, transition, incident_id)
 
 
+def build_notification(db: Session, run: CheckRun) -> tuple[str, str] | None:
+    """Return (chat_id, text) when the state changed, else None.
+
+    Only state CHANGES are notified: DOWN once when the incident opens, and
+    RECOVERED once when it is resolved. Nothing while it stays down.
+    """
+    if run.transition.incident_action is IncidentAction.NONE or run.incident_id is None:
+        return None
+    row = db.execute(
+        select(Monitor.name, Monitor.url, User.telegram_chat_id, Incident)
+        .join(User, User.id == Monitor.user_id)
+        .join(Incident, Incident.monitor_id == Monitor.id)
+        .where(Monitor.id == run.monitor_id, Incident.id == run.incident_id)
+    ).one_or_none()
+    if row is None or not row.telegram_chat_id:
+        return None
+    incident = row.Incident
+    if run.transition.incident_action is IncidentAction.OPEN:
+        text = format_down_message(row.name, row.url, incident.cause, incident.started_at)
+    else:
+        downtime = (incident.resolved_at or datetime.now(UTC)) - incident.started_at
+        text = format_recovered_message(row.name, row.url, downtime)
+    return row.telegram_chat_id, text
+
+
 @celery_app.task(name="app.worker.tasks.check_monitor")
 def check_monitor(monitor_id: int) -> None:
     with SessionLocal() as db:
-        run_check(db, monitor_id)
+        run = run_check(db, monitor_id)
+        message = build_notification(db, run) if run is not None else None
+    if message is not None:
+        try:
+            send_notification.delay(*message)
+        except Exception:
+            # A failure to enqueue the alert must not break the check itself.
+            logger.exception("Could not enqueue notification", extra={"monitor_id": monitor_id})
+
+
+# ---------------------------------------------------------------- notify
+
+
+@celery_app.task(
+    name="app.worker.tasks.send_notification",
+    autoretry_for=(NotificationError,),
+    max_retries=5,
+    retry_backoff=True,  # wait 1s, 2s, 4s, 8s, 16s ... between attempts
+    retry_backoff_max=600,
+    retry_jitter=True,  # randomize waits so many retries do not hit Telegram together
+)
+def send_notification(chat_id: str, text: str) -> str:
+    notifier = get_notifier()
+    if notifier is None:
+        logger.info("Notifications disabled (no TELEGRAM_BOT_TOKEN), skipping")
+        return "skipped"
+    notifier.send(chat_id, text)
+    return "sent"
 
 
 # ---------------------------------------------------------------- cleanup
