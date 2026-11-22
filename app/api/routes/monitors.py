@@ -1,5 +1,6 @@
 """Monitor CRUD endpoints."""
 
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Response, status
@@ -8,8 +9,10 @@ from sqlalchemy import func, select
 from app.api.deps import CurrentUser, DbSession
 from app.core.config import get_settings
 from app.core.errors import AppError, NotFoundError
-from app.models import Monitor, MonitorStatus, User
+from app.models import CheckResult, Incident, Monitor, MonitorStatus, User
 from app.schemas.monitor import MonitorCreate, MonitorPage, MonitorRead, MonitorUpdate
+from app.schemas.stats import CheckResultRead, IncidentRead, MonitorStatsRead
+from app.services.stats import Period, get_monitor_stats
 from app.services.url_validator import URLValidationError, validate_target_url
 
 router = APIRouter(prefix="/monitors", tags=["monitors"])
@@ -132,3 +135,51 @@ def resume_monitor(monitor_id: int, db: DbSession, user: CurrentUser) -> Monitor
     db.commit()
     db.refresh(monitor)
     return monitor
+
+
+@router.get("/{monitor_id}/checks", response_model=list[CheckResultRead])
+def list_checks(
+    monitor_id: int,
+    db: DbSession,
+    user: CurrentUser,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    from_: Annotated[datetime | None, Query(alias="from")] = None,
+    to: Annotated[datetime | None, Query()] = None,
+) -> list[CheckResult]:
+    """Check history, newest first. `from` / `to` are ISO 8601 timestamps."""
+    get_owned_monitor(db, user, monitor_id)
+    query = select(CheckResult).where(CheckResult.monitor_id == monitor_id)
+    if from_ is not None:
+        query = query.where(CheckResult.checked_at >= from_)
+    if to is not None:
+        query = query.where(CheckResult.checked_at <= to)
+    return list(db.scalars(query.order_by(CheckResult.checked_at.desc()).limit(limit)))
+
+
+@router.get("/{monitor_id}/stats", response_model=MonitorStatsRead)
+def monitor_stats(
+    monitor_id: int, db: DbSession, user: CurrentUser, period: Period = "24h"
+) -> MonitorStatsRead:
+    get_owned_monitor(db, user, monitor_id)
+    return MonitorStatsRead.model_validate(get_monitor_stats(db, monitor_id, period))
+
+
+@router.get("/{monitor_id}/incidents", response_model=list[IncidentRead])
+def list_incidents(
+    monitor_id: int,
+    db: DbSession,
+    user: CurrentUser,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[Incident]:
+    """Incidents, newest first. An incident with `resolved_at: null` is ongoing."""
+    get_owned_monitor(db, user, monitor_id)
+    return list(
+        db.scalars(
+            select(Incident)
+            .where(Incident.monitor_id == monitor_id)
+            .order_by(Incident.started_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+    )
