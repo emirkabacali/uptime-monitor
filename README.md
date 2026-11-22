@@ -46,6 +46,24 @@ Then open:
    (this calls `POST /api/v1/auth/login` and stores the JWT access token).
 3. Manage monitors under `/api/v1/monitors`. Each user sees only their own monitors.
 
+## Telegram notifications
+
+The monitor sends a message when a site goes **DOWN** (after `FAILURE_THRESHOLD` failed
+checks in a row) and when it **RECOVERS** (with the downtime). Nothing is sent while the
+state does not change.
+
+1. In Telegram, open **@BotFather**, send `/newbot` and follow the steps. Copy the token
+   into `TELEGRAM_BOT_TOKEN` in `.env` and restart the API and the worker.
+2. Open a chat with your new bot and send it any message (bots cannot write first).
+3. Find your chat id: open
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser and copy
+   `result[0].message.chat.id`.
+4. Save it: `PATCH /api/v1/users/me` with `{"telegram_chat_id": "<your chat id>"}`.
+5. Test it: `POST /api/v1/users/me/test-notification`.
+
+Notifications are sent by a separate Celery task with up to 5 retries and exponential
+backoff, so a Telegram outage never blocks or breaks the checks.
+
 All errors use the same JSON shape: `{"detail": "...", "code": "..."}`.
 
 ## Development
