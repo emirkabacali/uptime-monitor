@@ -7,18 +7,25 @@ tests never see each other's data.
 """
 
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
-import pytest
-from alembic.config import Config
-from fastapi.testclient import TestClient
-from sqlalchemy import Engine, create_engine, text
-from sqlalchemy.engine import make_url
-from sqlalchemy.orm import Session
+# Test configuration must be in the environment before the app is imported.
+os.environ["ENVIRONMENT"] = "test"
+os.environ.setdefault("JWT_SECRET", "test-secret-that-is-long-enough-for-hs256-signing")
 
-from alembic import command
-from app.db.session import get_db
-from app.main import app
+import pytest  # noqa: E402
+from alembic import command  # noqa: E402
+from alembic.config import Config  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import Engine, create_engine, text  # noqa: E402
+from sqlalchemy.engine import make_url  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
+
+from app.db.session import get_db  # noqa: E402
+from app.main import app  # noqa: E402
+
+AuthHeaders = dict[str, str]
+DEFAULT_PASSWORD = "correct-horse-battery"
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL", "postgresql+psycopg://app:app@localhost:5433/uptime_test"
@@ -80,3 +87,24 @@ def client(db_session: Session) -> Iterator[TestClient]:
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def register_and_login(client: TestClient) -> Callable[..., AuthHeaders]:
+    """Create a user and return the Authorization header for them."""
+
+    def _register_and_login(email: str, password: str = DEFAULT_PASSWORD) -> AuthHeaders:
+        response = client.post("/api/v1/auth/register", json={"email": email, "password": password})
+        assert response.status_code == 201, response.text
+        response = client.post("/api/v1/auth/login", data={"username": email, "password": password})
+        assert response.status_code == 200, response.text
+        return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+    return _register_and_login
+
+
+@pytest.fixture
+def auth_client(client: TestClient, register_and_login: Callable[..., AuthHeaders]) -> TestClient:
+    """The same client, logged in as owner@example.com."""
+    client.headers.update(register_and_login("owner@example.com"))
+    return client
