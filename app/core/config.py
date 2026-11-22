@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     database_url: str = "postgresql+psycopg://app:app@localhost:5433/uptime"
+    redis_url: str = "redis://localhost:6379/0"
 
     # Required, no default: the application refuses to start without a strong secret.
     jwt_secret: SecretStr
@@ -27,6 +28,13 @@ class Settings(BaseSettings):
 
     # Monitor state machine: failed checks in a row before a monitor is DOWN.
     failure_threshold: int = Field(default=3, ge=1)
+
+    # Scheduler and retention.
+    dispatch_batch_size: int = Field(default=500, ge=1)
+    check_retention_days: int = Field(default=30, ge=1)
+
+    # Login attempts allowed per client IP per minute.
+    login_rate_limit_per_minute: int = Field(default=10, ge=1)
 
     # SSRF protection switch. Only for tests against local servers; never in production.
     allow_private_targets: bool = False
