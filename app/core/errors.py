@@ -21,11 +21,18 @@ DEFAULT_CODES = {
 class AppError(Exception):
     """An expected error that maps directly to an HTTP response."""
 
-    def __init__(self, status_code: int, detail: str, code: str | None = None) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        detail: str,
+        code: str | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
         self.code = code or DEFAULT_CODES.get(status_code, "error")
+        self.headers = headers
 
 
 class NotFoundError(AppError):
@@ -35,7 +42,9 @@ class NotFoundError(AppError):
 
 def _app_error_handler(_: Request, exc: AppError) -> JSONResponse:
     return JSONResponse(
-        status_code=exc.status_code, content={"detail": exc.detail, "code": exc.code}
+        status_code=exc.status_code,
+        content={"detail": exc.detail, "code": exc.code},
+        headers=exc.headers,
     )
 
 
