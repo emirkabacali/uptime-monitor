@@ -1,5 +1,7 @@
 # Uptime Monitor
 
+[![CI](https://github.com/emirkabacali/uptime-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/emirkabacali/uptime-monitor/actions/workflows/ci.yml)
+
 Uptime monitoring service for websites and APIs: FastAPI, Celery, PostgreSQL, Redis, Docker,
 Prometheus.
 
