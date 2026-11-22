@@ -6,7 +6,8 @@ from fastapi import APIRouter, Query, Response, status
 from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, DbSession
-from app.core.errors import NotFoundError
+from app.core.config import get_settings
+from app.core.errors import AppError, NotFoundError
 from app.models import Monitor, MonitorStatus, User
 from app.schemas.monitor import MonitorCreate, MonitorPage, MonitorRead, MonitorUpdate
 
@@ -27,6 +28,12 @@ def get_owned_monitor(db: DbSession, user: User, monitor_id: int) -> Monitor:
 
 @router.post("", response_model=MonitorRead, status_code=status.HTTP_201_CREATED)
 def create_monitor(payload: MonitorCreate, db: DbSession, user: CurrentUser) -> Monitor:
+    limit = get_settings().max_monitors_per_user
+    count = db.scalar(select(func.count()).select_from(Monitor).where(Monitor.user_id == user.id))
+    if (count or 0) >= limit:
+        # 409 Conflict: the request is valid, but conflicts with the account's
+        # current state (see docs/decisions/0001-monitor-limit-response.md).
+        raise AppError(409, f"Monitor limit reached ({limit})", "monitor_limit_reached")
     monitor = Monitor(
         user_id=user.id,
         name=payload.name,
