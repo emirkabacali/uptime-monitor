@@ -3,7 +3,10 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+MIN_JWT_SECRET_BYTES = 32
 
 
 class Settings(BaseSettings):
@@ -15,6 +18,19 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     database_url: str = "postgresql+psycopg://app:app@localhost:5433/uptime"
+
+    # Required, no default: the application refuses to start without a strong secret.
+    jwt_secret: SecretStr
+    jwt_expire_minutes: int = Field(default=60, ge=1)
+
+    max_monitors_per_user: int = Field(default=20, ge=1)
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def jwt_secret_must_be_long(cls, value: SecretStr) -> SecretStr:
+        if len(value.get_secret_value().encode()) < MIN_JWT_SECRET_BYTES:
+            raise ValueError(f"JWT_SECRET must be at least {MIN_JWT_SECRET_BYTES} bytes")
+        return value
 
 
 @lru_cache
