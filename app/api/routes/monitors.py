@@ -10,8 +10,18 @@ from app.core.config import get_settings
 from app.core.errors import AppError, NotFoundError
 from app.models import Monitor, MonitorStatus, User
 from app.schemas.monitor import MonitorCreate, MonitorPage, MonitorRead, MonitorUpdate
+from app.services.url_validator import URLValidationError, validate_target_url
 
 router = APIRouter(prefix="/monitors", tags=["monitors"])
+
+
+def ensure_safe_url(url: str) -> str:
+    """Apply the SSRF rules to a user-supplied URL; invalid targets give 422."""
+    try:
+        validate_target_url(url)
+    except URLValidationError as exc:
+        raise AppError(422, str(exc), exc.code) from exc
+    return url
 
 
 def get_owned_monitor(db: DbSession, user: User, monitor_id: int) -> Monitor:
@@ -34,10 +44,11 @@ def create_monitor(payload: MonitorCreate, db: DbSession, user: CurrentUser) -> 
         # 409 Conflict: the request is valid, but conflicts with the account's
         # current state (see docs/decisions/0001-monitor-limit-response.md).
         raise AppError(409, f"Monitor limit reached ({limit})", "monitor_limit_reached")
+    url = ensure_safe_url(str(payload.url))
     monitor = Monitor(
         user_id=user.id,
         name=payload.name,
-        url=str(payload.url),
+        url=url,
         interval_seconds=payload.interval_seconds,
         timeout_seconds=payload.timeout_seconds,
         is_public=payload.is_public,
@@ -81,7 +92,7 @@ def update_monitor(
     monitor = get_owned_monitor(db, user, monitor_id)
     changes = payload.model_dump(exclude_unset=True, exclude_none=True)
     if "url" in changes:
-        new_url = str(changes.pop("url"))
+        new_url = ensure_safe_url(str(changes.pop("url")))
         if new_url != monitor.url:
             # A different URL is a different target: start its history fresh.
             monitor.url = new_url
