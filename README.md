@@ -18,16 +18,25 @@ cp .env.example .env
 sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -base64 48)|" .env
 
 # Start PostgreSQL and create the schema
-docker compose up -d postgres
+docker compose up -d postgres redis
 uv run alembic upgrade head
 
 # Start the API with auto-reload
 uv run uvicorn app.main:app --reload
 ```
 
+In two more terminals, start the background worker and the scheduler:
+
+```bash
+docker compose up -d redis
+uv run celery -A app.worker.celery_app worker --pool=threads --concurrency=20 --loglevel=INFO
+uv run celery -A app.worker.celery_app beat --loglevel=INFO   # run exactly one beat
+```
+
 Then open:
 
 - http://localhost:8000/health — liveness check
+- http://localhost:8000/ready — readiness check (database and Redis)
 - http://localhost:8000/docs — interactive API documentation (Swagger UI)
 
 ## Using the API
