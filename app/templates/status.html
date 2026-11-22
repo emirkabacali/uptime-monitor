@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="60">
+  <title>{{ slug }} · Status</title>
+  <style>
+    :root { --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #6b7280; --line: #e5e7eb;
+            --up: #16a34a; --down: #dc2626; --unknown: #9ca3af; --paused: #d97706; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0f1115; --card: #181b22; --text: #e8eaee; --muted: #9aa3b2; --line: #2a2f3a; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+           background: var(--bg); color: var(--text); }
+    main { max-width: 760px; margin: 0 auto; padding: 32px 16px 48px; }
+    h1 { font-size: 1.5rem; margin: 0 0 20px; }
+    h2 { font-size: 1.1rem; margin: 32px 0 12px; }
+    .banner { padding: 16px 20px; border-radius: 10px; color: #fff; font-weight: 600; }
+    .banner.ok { background: var(--up); }
+    .banner.bad { background: var(--down); }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+    .row { display: flex; align-items: center; gap: 12px; padding: 14px 20px;
+           border-top: 1px solid var(--line); }
+    .row:first-child { border-top: 0; }
+    .name { flex: 1; font-weight: 500; overflow-wrap: anywhere; }
+    .uptime { color: var(--muted); font-size: .9rem; white-space: nowrap; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+    .state { font-size: .85rem; font-weight: 600; width: 72px; text-align: right; }
+    .up { color: var(--up); } .dot.up { background: var(--up); }
+    .down { color: var(--down); } .dot.down { background: var(--down); }
+    .unknown { color: var(--unknown); } .dot.unknown { background: var(--unknown); }
+    .paused { color: var(--paused); } .dot.paused { background: var(--paused); }
+    .incident { padding: 14px 20px; border-top: 1px solid var(--line); }
+    .incident:first-child { border-top: 0; }
+    .muted { color: var(--muted); font-size: .9rem; }
+    footer { margin-top: 32px; color: var(--muted); font-size: .85rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>{{ slug }} status</h1>
+
+  {% if not monitors %}
+    <div class="card"><div class="row"><span class="muted">No public monitors yet.</span></div></div>
+  {% else %}
+    <div class="banner {{ 'bad' if any_down else 'ok' }}">
+      {{ "Some systems are down" if any_down else "All systems operational" }}
+    </div>
+
+    <h2>Services</h2>
+    <div class="card">
+      {% for m in monitors %}
+      <div class="row">
+        <span class="dot {{ m.state }}" aria-hidden="true"></span>
+        <span class="name">{{ m.name }}</span>
+        <span class="uptime">
+          {% if m.uptime is none %}no data (24h){% else %}{{ "%.2f"|format(m.uptime) }}% uptime (24h){% endif %}
+        </span>
+        <span class="state {{ m.state }}">{{ m.state|upper }}</span>
+      </div>
+      {% endfor %}
+    </div>
+
+    <h2>Recent incidents</h2>
+    <div class="card">
+      {% for i in incidents %}
+      <div class="incident">
+        <strong>{{ i.monitor }}</strong>
+        {% if i.resolved_at %}
+          <span class="up">resolved</span>
+        {% else %}
+          <span class="down">ongoing</span>
+        {% endif %}
+        <div class="muted">
+          Started {{ i.started_at.strftime("%Y-%m-%d %H:%M") }} UTC · duration {{ i.duration|duration }}
+          · cause: {{ i.cause }}
+        </div>
+      </div>
+      {% else %}
+      <div class="incident muted">No incidents in the last 7 days.</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <footer>Updated {{ generated_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC · refreshes every 60 seconds</footer>
+</main>
+</body>
+</html>

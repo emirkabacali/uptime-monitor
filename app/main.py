@@ -2,7 +2,7 @@
 
 from fastapi import FastAPI
 
-from app.api.routes import auth, health, monitors, users
+from app.api.routes import auth, health, monitors, status_page, users
 from app.core.config import get_settings
 from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging
@@ -25,3 +25,4 @@ app.include_router(health.router)
 app.include_router(auth.router, prefix=API_PREFIX)
 app.include_router(users.router, prefix=API_PREFIX)
 app.include_router(monitors.router, prefix=API_PREFIX)
+app.include_router(status_page.router)
