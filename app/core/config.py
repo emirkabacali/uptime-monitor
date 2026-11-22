@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     dispatch_batch_size: int = Field(default=500, ge=1)
     check_retention_days: int = Field(default=30, ge=1)
 
+    # Telegram notifications are disabled when the token is empty.
+    telegram_bot_token: SecretStr | None = None
+
     # Login attempts allowed per client IP per minute.
     login_rate_limit_per_minute: int = Field(default=10, ge=1)
 

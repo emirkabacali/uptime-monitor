@@ -7,8 +7,10 @@ Run:
 
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import after_setup_logger
 
 from app.core.config import get_settings
+from app.core.logging import configure_logging
 
 settings = get_settings()
 
@@ -46,3 +48,8 @@ celery_app.conf.update(
         },
     },
 )
+
+
+@after_setup_logger.connect
+def _silence_noisy_loggers(**_: object) -> None:
+    configure_logging()

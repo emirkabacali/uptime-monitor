@@ -5,11 +5,13 @@ from fastapi import FastAPI
 from app.api.routes import auth, health, monitors, users
 from app.core.config import get_settings
 from app.core.errors import register_error_handlers
+from app.core.logging import configure_logging
 
 API_PREFIX = "/api/v1"
 
 # Fail fast: invalid configuration (e.g. a short JWT_SECRET) stops startup here.
 get_settings()
+configure_logging()
 
 app = FastAPI(
     title="Uptime Monitor",
