@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     environment: Literal["development", "production", "test"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
+    database_url: str = "postgresql+psycopg://app:app@localhost:5433/uptime"
+
 
 @lru_cache
 def get_settings() -> Settings:
