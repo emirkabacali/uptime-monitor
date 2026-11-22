@@ -7,6 +7,7 @@ tests never see each other's data.
 """
 
 import os
+import socket
 from collections.abc import Callable, Iterator
 
 # Test configuration must be in the environment before the app is imported.
@@ -23,6 +24,7 @@ from sqlalchemy.orm import Session  # noqa: E402
 
 from app.db.session import get_db  # noqa: E402
 from app.main import app  # noqa: E402
+from app.services import url_validator  # noqa: E402
 
 AuthHeaders = dict[str, str]
 DEFAULT_PASSWORD = "correct-horse-battery"
@@ -108,3 +110,34 @@ def auth_client(client: TestClient, register_and_login: Callable[..., AuthHeader
     """The same client, logged in as owner@example.com."""
     client.headers.update(register_and_login("owner@example.com"))
     return client
+
+
+# Fake DNS used by every test, so no test depends on the real network.
+FAKE_DNS: dict[str, list[str]] = {
+    "example.com": ["93.184.215.14"],
+    "example.org": ["93.184.215.15"],
+    "www.example.com": ["93.184.215.14"],
+    "ipv6.example.com": ["2606:2800:21f:cb07:6820:80da:af6b:8b2c"],
+    "internal.example.com": ["10.0.0.5"],
+    "metadata.example.com": ["169.254.169.254"],
+    # One public and one private address: must be rejected.
+    "mixed.example.com": ["93.184.215.14", "127.0.0.1"],
+    "localhost": ["127.0.0.1", "::1"],
+}
+
+
+def fake_getaddrinfo(host: str, port: int, *args: object, **kwargs: object) -> list:
+    addresses = FAKE_DNS.get(host.lower())
+    if addresses is None:
+        raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+    result = []
+    for address in addresses:
+        family = socket.AF_INET6 if ":" in address else socket.AF_INET
+        sockaddr = (address, port, 0, 0) if family == socket.AF_INET6 else (address, port)
+        result.append((family, socket.SOCK_STREAM, 6, "", sockaddr))
+    return result
+
+
+@pytest.fixture(autouse=True)
+def fake_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(url_validator, "_getaddrinfo", fake_getaddrinfo)
