@@ -1,14 +1,25 @@
+# Full local stack:   cp .env.example .env && docker compose up -d --build
+# Only the API port is published. PostgreSQL and Redis are reachable only inside
+# the compose network (by service name: postgres, redis).
+# For `uv run` development and tests, also publish their ports with:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis
+
+x-app: &app
+  build: .
+  image: uptime-monitor:local
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql+psycopg://app:${POSTGRES_PASSWORD:-app}@postgres:5432/uptime
+    REDIS_URL: redis://redis:6379/0
+  restart: unless-stopped
+
 services:
   postgres:
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
       POSTGRES_DB: uptime
-    ports:
-      # Bound to localhost only: reachable from the dev machine, not from the network.
-      # Host port 5433 avoids clashing with a locally installed PostgreSQL.
-      - "127.0.0.1:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -16,11 +27,10 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -28,6 +38,61 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
+
+  # One-off job: apply database migrations, then exit.
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    <<: *app
+    command: ["celery", "-A", "app.worker.celery_app", "worker",
+              "--pool=threads", "--concurrency=20", "--loglevel=INFO"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.healthcheck", "worker"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  # Exactly one beat instance: it only schedules work, it does not run checks.
+  beat:
+    <<: *app
+    command: ["celery", "-A", "app.worker.celery_app", "beat",
+              "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.healthcheck", "beat"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
 
 volumes:
   postgres_data:

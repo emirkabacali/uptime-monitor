@@ -5,39 +5,42 @@ Prometheus.
 
 > Work in progress. The project is being built phase by phase.
 
-## Running locally
+## Quick start (Docker)
 
-Requirements: Python 3.12+, [uv](https://docs.astral.sh/uv/), Docker.
+Requirements: Docker with Docker Compose.
 
 ```bash
-# Install dependencies (creates .venv from uv.lock)
-uv sync
-
-# Create your local configuration and set a random JWT secret
 cp .env.example .env
 sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -base64 48)|" .env
-
-# Start PostgreSQL and create the schema
-docker compose up -d postgres redis
-uv run alembic upgrade head
-
-# Start the API with auto-reload
-uv run uvicorn app.main:app --reload
+docker compose up -d --build
 ```
 
-In two more terminals, start the background worker and the scheduler:
+This starts PostgreSQL, Redis, a one-off migration job, the API, the check worker and the
+scheduler. All application containers use the same image and run as a non-root user.
+Only the API port (8000) is published.
+
+- http://localhost:8000/docs — interactive API documentation (Swagger UI)
+- http://localhost:8000/health — liveness check
+- http://localhost:8000/ready — readiness check (database and Redis)
+
+`docker compose ps` should show every service as `healthy` (and `migrate` as exited 0).
+
+## Development without Docker for the app
+
+Requirements: Python 3.12+, [uv](https://docs.astral.sh/uv/), Docker (for PostgreSQL and Redis).
 
 ```bash
-docker compose up -d redis
+uv sync
+cp .env.example .env   # and set JWT_SECRET as above
+
+# PostgreSQL (localhost:5433) and Redis (localhost:6379), published on localhost only
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis
+uv run alembic upgrade head
+
+uv run uvicorn app.main:app --reload
 uv run celery -A app.worker.celery_app worker --pool=threads --concurrency=20 --loglevel=INFO
 uv run celery -A app.worker.celery_app beat --loglevel=INFO   # run exactly one beat
 ```
-
-Then open:
-
-- http://localhost:8000/health — liveness check
-- http://localhost:8000/ready — readiness check (database and Redis)
-- http://localhost:8000/docs — interactive API documentation (Swagger UI)
 
 ## Using the API
 
@@ -69,7 +72,7 @@ All errors use the same JSON shape: `{"detail": "...", "code": "..."}`.
 ## Development
 
 ```bash
-uv run pytest                 # run tests (needs the postgres container)
+uv run pytest                 # run tests (needs postgres + redis from the dev compose file)
 uv run ruff check . --fix     # lint
 uv run ruff format .          # format
 uv run pre-commit install     # run ruff automatically before every commit
