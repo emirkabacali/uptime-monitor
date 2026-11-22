@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterator
 
 # Test configuration must be in the environment before the app is imported.
 os.environ["ENVIRONMENT"] = "test"
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/15")  # separate test database
 os.environ.setdefault("JWT_SECRET", "test-secret-that-is-long-enough-for-hs256-signing")
 
 import pytest  # noqa: E402
@@ -22,6 +23,7 @@ from sqlalchemy import Engine, create_engine, text  # noqa: E402
 from sqlalchemy.engine import make_url  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
+from app.core.redis import get_redis  # noqa: E402
 from app.db.session import get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.services import url_validator  # noqa: E402
@@ -141,3 +143,10 @@ def fake_getaddrinfo(host: str, port: int, *args: object, **kwargs: object) -> l
 @pytest.fixture(autouse=True)
 def fake_dns(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(url_validator, "_getaddrinfo", fake_getaddrinfo)
+
+
+@pytest.fixture(autouse=True)
+def clean_redis() -> Iterator[None]:
+    """Empty the Redis test database before each test (rate-limit counters)."""
+    get_redis().flushdb()
+    yield
