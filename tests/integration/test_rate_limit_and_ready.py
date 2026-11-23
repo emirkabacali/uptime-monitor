@@ -1,8 +1,10 @@
 import time
 
+import pytest
 import redis
 from fastapi.testclient import TestClient
 
+from app.core import rate_limit
 from app.core.redis import get_redis, make_redis
 from app.main import app
 
@@ -14,7 +16,10 @@ def broken_redis() -> redis.Redis:
     return make_redis("redis://127.0.0.1:1/0")
 
 
-def test_login_is_rate_limited_per_ip(client: TestClient) -> None:
+def test_login_is_rate_limited_per_ip(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Freeze the clock in the middle of a minute: with a fixed window, requests that
+    # straddle a minute boundary land in two windows (this made the test flaky in CI).
+    monkeypatch.setattr(rate_limit.time, "time", lambda: 1_800_000_030.0)
     form = {"username": "someone@example.com", "password": "wrong-password"}
     statuses = [client.post(LOGIN, data=form).status_code for _ in range(10)]
 
@@ -23,7 +28,7 @@ def test_login_is_rate_limited_per_ip(client: TestClient) -> None:
     assert statuses == [401] * 10
     assert blocked.status_code == 429
     assert blocked.json()["code"] == "too_many_requests"
-    assert 0 < int(blocked.headers["Retry-After"]) <= 60
+    assert blocked.headers["Retry-After"] == "30"  # until the window ends
 
 
 def test_rate_limiter_fails_open_when_redis_is_down(client: TestClient) -> None:

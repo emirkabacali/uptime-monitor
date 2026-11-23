@@ -71,12 +71,22 @@ def list_monitors(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> MonitorPage:
     owned = Monitor.user_id == user.id
-    total = db.scalar(select(func.count()).select_from(Monitor).where(owned)) or 0
-    items = db.scalars(
-        select(Monitor).where(owned).order_by(Monitor.id).limit(limit).offset(offset)
+    # One round trip instead of two: the window function adds the total row
+    # count (before LIMIT/OFFSET) to every returned row. Found with a load test
+    # (see loadtest/README.md): each extra query costs a full database round trip.
+    rows = db.execute(
+        select(Monitor, func.count().over().label("total"))
+        .where(owned)
+        .order_by(Monitor.id)
+        .limit(limit)
+        .offset(offset)
     ).all()
+    if rows:
+        total = rows[0].total
+    else:  # offset past the end: no rows to carry the total, count separately
+        total = db.scalar(select(func.count()).select_from(Monitor).where(owned)) or 0
     return MonitorPage(
-        items=[MonitorRead.model_validate(m) for m in items],
+        items=[MonitorRead.model_validate(row.Monitor) for row in rows],
         total=total,
         limit=limit,
         offset=offset,

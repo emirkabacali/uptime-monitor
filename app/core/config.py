@@ -19,6 +19,10 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://app:app@localhost:5433/uptime"
     redis_url: str = "redis://localhost:6379/0"
+    # Connections per process. Keep (pool + overflow) x processes below
+    # PostgreSQL's max_connections (100 by default).
+    db_pool_size: int = Field(default=20, ge=1)
+    db_max_overflow: int = Field(default=10, ge=0)
 
     # Required, no default: the application refuses to start without a strong secret.
     jwt_secret: SecretStr
