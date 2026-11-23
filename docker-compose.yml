@@ -1,5 +1,5 @@
 # Full local stack:   cp .env.example .env && docker compose up -d --build
-# Only the API port is published. PostgreSQL and Redis are reachable only inside
+# Only the API port is published (plus Grafana on localhost:3000). PostgreSQL and Redis are reachable only inside
 # the compose network (by service name: postgres, redis).
 # For `uv run` development and tests, also publish their ports with:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis
@@ -94,6 +94,35 @@ services:
       redis:
         condition: service_healthy
 
+  # ---------- observability
+  prometheus:
+    image: prom/prometheus:v3.16.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=15d"]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.3.1
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me-locally}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"   # local only
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:
+  prometheus_data:
+  grafana_data:

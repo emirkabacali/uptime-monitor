@@ -2,6 +2,8 @@
 #
 #   IMAGE_TAG=<commit sha> docker compose -f docker-compose.prod.yml up -d
 #
+# Next to it on the server: .env, Caddyfile and monitoring/ (copied by the deploy workflow).
+#
 # - The application image is pulled from GHCR; nothing is built on the server.
 # - Only Caddy publishes ports (80/443). PostgreSQL, Redis and the API's
 #   /metrics are reachable only inside the compose network.
@@ -144,8 +146,44 @@ services:
       resources:
         limits: { memory: 192m }
 
+  # ---------- observability (internal; Grafana is served by Caddy behind its login)
+  prometheus:
+    image: prom/prometheus:v3.16.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=15d"]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+    logging: *logging
+    deploy:
+      resources:
+        limits: { memory: 384m }
+
+  grafana:
+    image: grafana/grafana:13.3.1
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_ROOT_URL: https://grafana.${DOMAIN}
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    logging: *logging
+    deploy:
+      resources:
+        limits: { memory: 256m }
+
 volumes:
   postgres_data:
   redis_data:
   caddy_data:
   caddy_config:
+  prometheus_data:
+  grafana_data:

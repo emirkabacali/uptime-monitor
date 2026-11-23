@@ -5,6 +5,7 @@ can call them directly. The Celery tasks are thin wrappers around them.
 """
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -14,6 +15,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.metrics import CHECK_DURATION, CHECKS, MONITORS_ACTIVE, NOTIFICATIONS
 from app.db.session import SessionLocal
 from app.models import CheckResult, Incident, Monitor, User
 from app.services.checker import CheckOutcome, check_url
@@ -68,6 +70,9 @@ def claim_due_monitors(db: Session, limit: int) -> list[int]:
 def dispatch_due_checks() -> int:
     with SessionLocal() as db:
         ids = claim_due_monitors(db, get_settings().dispatch_batch_size)
+        MONITORS_ACTIVE.set(
+            db.scalar(select(func.count()).select_from(Monitor).where(Monitor.is_active)) or 0
+        )
     for monitor_id in ids:
         check_monitor.delay(monitor_id)
     if ids:
@@ -111,7 +116,10 @@ def run_check(db: Session, monitor_id: int, checker: Checker = check_url) -> Che
     # End the read transaction: no locks or open transaction during the HTTP call.
     db.commit()
 
+    started = time.perf_counter()
     outcome = checker(url, timeout)  # validates the URL (SSRF) before every request
+    CHECK_DURATION.observe(time.perf_counter() - started)
+    CHECKS.labels(result="up" if outcome.is_up else "down").inc()
     now = datetime.now(UTC)
 
     # Lock the monitor row so two checks of the same monitor cannot interleave
@@ -226,8 +234,14 @@ def send_notification(chat_id: str, text: str) -> str:
     notifier = get_notifier()
     if notifier is None:
         logger.info("Notifications disabled (no TELEGRAM_BOT_TOKEN), skipping")
+        NOTIFICATIONS.labels(status="skipped").inc()
         return "skipped"
-    notifier.send(chat_id, text)
+    try:
+        notifier.send(chat_id, text)
+    except NotificationError:
+        NOTIFICATIONS.labels(status="failed").inc()  # counted per attempt; Celery retries
+        raise
+    NOTIFICATIONS.labels(status="sent").inc()
     return "sent"
 
 

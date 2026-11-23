@@ -58,7 +58,9 @@ jobs:
           EOF
 
       - name: Upload deployment files
-        run: scp deploy/docker-compose.prod.yml deploy/Caddyfile deploy/backup.sh deploy/restore.sh "server:$APP_DIR/"
+        run: |
+          scp deploy/docker-compose.prod.yml deploy/Caddyfile deploy/backup.sh deploy/restore.sh "server:$APP_DIR/"
+          scp -r monitoring "server:$APP_DIR/"
 
       - name: Pull image, migrate, restart
         run: |
