@@ -83,6 +83,17 @@ uv run pre-commit install     # run ruff automatically before every commit
 Tests run against a separate PostgreSQL database (`uptime_test`, created automatically).
 Each test runs in a transaction that is rolled back afterwards.
 
+## Deployment
+
+Production runs on a single Ubuntu VPS with Docker Compose (`deploy/docker-compose.prod.yml`):
+Caddy terminates HTTPS with an automatic Let's Encrypt certificate and is the only service
+with public ports (80/443). Every commit that passes CI on `main` is deployed by
+`.github/workflows/deploy.yml` over SSH: pull the image tagged with the commit SHA, run
+migrations, restart, then smoke-test `/health` and `/ready`. Rollback = deploy an older SHA.
+Daily `pg_dump` backups keep the last 7 copies, and the restore is tested.
+
+See [docs/deployment.md](docs/deployment.md) for the full runbook.
+
 ## Design decisions
 
 Architecture decision records live in [`docs/decisions/`](docs/decisions/).
