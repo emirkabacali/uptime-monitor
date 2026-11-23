@@ -131,7 +131,7 @@ uv run uvicorn app.main:app --reload
 uv run celery -A app.worker.celery_app worker --pool=threads --concurrency=20 --loglevel=INFO
 uv run celery -A app.worker.celery_app beat --loglevel=INFO   # exactly one beat
 
-uv run pytest                 # 240 tests, ~96% coverage
+uv run pytest                 # 240 tests, ~97% coverage
 uv run ruff check . --fix && uv run ruff format .
 uv run pre-commit install
 ```
@@ -146,7 +146,7 @@ Every push and pull request runs [CI](.github/workflows/ci.yml):
 
 1. **lint** — `ruff check` and `ruff format --check`
 2. **test** — PostgreSQL and Redis service containers, `alembic upgrade head`, pytest with
-   coverage (fails below 80%; currently ~96%)
+   coverage (fails below 80%; currently ~97%)
 3. **build** — Docker image; on `main` it is pushed to GHCR as `latest` and the commit SHA
 
 `main` is protected: changes arrive through pull requests and cannot be merged until all
