@@ -1,0 +1,83 @@
+name: Deploy
+
+on:
+  # Continuous deployment: after CI succeeds on main, deploy that exact commit.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  # Manual deploy / rollback: run with the commit SHA of an older image.
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (a full commit SHA). Use an older SHA to roll back."
+        required: true
+
+permissions:
+  contents: read
+
+# Never run two deployments at the same time; queue them instead.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Skipped until the server exists: set the repository variable DEPLOY_ENABLED=true.
+    if: >-
+      vars.DEPLOY_ENABLED == 'true' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://${{ vars.DOMAIN }}
+    env:
+      IMAGE_TAG: ${{ github.event.inputs.image_tag || github.event.workflow_run.head_sha }}
+      APP_DIR: uptime-monitor
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Pinned host key: protects against connecting to an impostor server.
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host server
+            HostName ${{ secrets.SSH_HOST }}
+            User ${{ secrets.SSH_USER }}
+            IdentityFile ~/.ssh/deploy_key
+            StrictHostKeyChecking yes
+          EOF
+
+      - name: Upload deployment files
+        run: scp deploy/docker-compose.prod.yml deploy/Caddyfile deploy/backup.sh deploy/restore.sh "server:$APP_DIR/"
+
+      - name: Pull image, migrate, restart
+        run: |
+          # shellcheck disable=SC2029  # IMAGE_TAG and APP_DIR are meant to expand here
+          ssh server "cd $APP_DIR && chmod +x backup.sh restore.sh \
+            && export IMAGE_TAG=$IMAGE_TAG \
+            && docker compose -f docker-compose.prod.yml pull --quiet \
+            && docker compose -f docker-compose.prod.yml run --rm migrate \
+            && docker compose -f docker-compose.prod.yml up -d --remove-orphans --wait \
+            && echo $IMAGE_TAG > DEPLOYED_TAG \
+            && docker image prune -f"
+
+      - name: Smoke test (health and readiness over HTTPS)
+        run: |
+          for path in /health /ready; do
+            for attempt in 1 2 3 4 5 6; do
+              code=$(curl -s -o /dev/null -w '%{http_code}' "https://${{ vars.DOMAIN }}$path" || true)
+              [ "$code" = "200" ] && echo "$path OK" && break
+              [ "$attempt" = "6" ] && echo "$path failed with $code" && exit 1
+              sleep 10
+            done
+          done

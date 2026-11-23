@@ -1,0 +1,151 @@
+# Production stack. Lives on the server next to `.env` and `Caddyfile`.
+#
+#   IMAGE_TAG=<commit sha> docker compose -f docker-compose.prod.yml up -d
+#
+# - The application image is pulled from GHCR; nothing is built on the server.
+# - Only Caddy publishes ports (80/443). PostgreSQL, Redis and the API's
+#   /metrics are reachable only inside the compose network.
+
+x-app: &app
+  image: ghcr.io/emirkabacali/uptime-monitor:${IMAGE_TAG:-latest}
+  env_file: .env
+  environment:
+    ENVIRONMENT: production
+    DATABASE_URL: postgresql+psycopg://app:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/uptime
+    REDIS_URL: redis://redis:6379/0
+  restart: unless-stopped
+  logging: &logging
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data      # TLS certificates: must survive restarts
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *logging
+    deploy:
+      resources:
+        limits: { memory: 128m }
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: uptime
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d uptime"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    logging: *logging
+    deploy:
+      resources:
+        limits: { memory: 512m }
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "100mb",
+              "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    logging: *logging
+    deploy:
+      resources:
+        limits: { memory: 128m }
+
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+psycopg://app:${POSTGRES_PASSWORD}@postgres:5432/uptime
+      REDIS_URL: redis://redis:6379/0
+      # Trust X-Forwarded-For from Caddy so rate limiting sees the real client IP.
+      # Safe because the API port is not published; only Caddy can reach it.
+      FORWARDED_ALLOW_IPS: "*"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits: { memory: 384m }
+
+  worker:
+    <<: *app
+    command: ["celery", "-A", "app.worker.celery_app", "worker",
+              "--pool=threads", "--concurrency=20", "--loglevel=INFO"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.healthcheck", "worker"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits: { memory: 384m }
+
+  beat:
+    <<: *app
+    command: ["celery", "-A", "app.worker.celery_app", "beat",
+              "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.healthcheck", "beat"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits: { memory: 192m }
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
