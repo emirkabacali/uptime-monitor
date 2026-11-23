@@ -83,6 +83,22 @@ uv run pre-commit install     # run ruff automatically before every commit
 Tests run against a separate PostgreSQL database (`uptime_test`, created automatically).
 Each test runs in a transaction that is rolled back afterwards.
 
+## Observability
+
+- **Logs:** one JSON object per line. Every HTTP request gets a `request_id` (returned in the
+  `X-Request-ID` header, or taken from the incoming header) that appears in every log line
+  written while serving it; worker log lines carry the Celery `task_id`. Request bodies,
+  query strings, passwords and tokens are never logged.
+- **Metrics:** the API exposes `/metrics` (requests, latency histogram by route template);
+  the worker exposes port 9101 (`uptime_checks_total`, `uptime_check_duration_seconds`,
+  `uptime_notifications_total`, `uptime_monitors_active`). Both are internal only.
+- **Prometheus** scrapes both every 15 s (`monitoring/prometheus.yml`) and evaluates alert
+  rules (`monitoring/alerts.yml`, e.g. "no checks in 5 minutes").
+- **Grafana** is provisioned from code (`monitoring/grafana/`): data source and the
+  "Uptime Monitor" dashboard (requests/s, p95 latency, 5xx rate, checks/s, failed check
+  ratio, active monitors). Locally at http://localhost:3000 (user `admin`, password
+  `GRAFANA_ADMIN_PASSWORD` from `.env`); in production at `https://grafana.<domain>`.
+
 ## Deployment
 
 Production runs on a single Ubuntu VPS with Docker Compose (`deploy/docker-compose.prod.yml`):
