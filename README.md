@@ -131,7 +131,7 @@ uv run uvicorn app.main:app --reload
 uv run celery -A app.worker.celery_app worker --pool=threads --concurrency=20 --loglevel=INFO
 uv run celery -A app.worker.celery_app beat --loglevel=INFO   # exactly one beat
 
-uv run pytest                 # 240 tests, ~97% coverage
+uv run pytest                 # 243 tests, ~97% coverage
 uv run ruff check . --fix && uv run ruff format .
 uv run pre-commit install
 ```
