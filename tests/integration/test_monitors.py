@@ -113,3 +113,13 @@ def test_pause_and_resume(auth_client: TestClient) -> None:
 def test_pause_missing_monitor_returns_404(auth_client: TestClient) -> None:
     assert auth_client.post(f"{BASE}/999999/pause").status_code == 404
     assert auth_client.post(f"{BASE}/999999/resume").status_code == 404
+
+
+def test_list_offset_past_end_still_reports_total(auth_client: TestClient) -> None:
+    create(auth_client)
+    create(auth_client)
+
+    page = auth_client.get(BASE, params={"limit": 10, "offset": 50}).json()
+
+    assert page["items"] == []
+    assert page["total"] == 2
